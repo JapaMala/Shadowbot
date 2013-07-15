@@ -86,7 +86,7 @@ namespace Shadowbot
             return nick;
         }
 
-        public bool NickServVerify(string input)
+        bool NickServVerify(string input)
         {
             sendData("PRIVMSG", "NickServ" + " " + ":INFO" + " " + input);
             string reply = sr.ReadLine();
@@ -104,11 +104,24 @@ namespace Shadowbot
                 return false;
         }
 
+        string Decide(string param)
+        {
+            if (param.Length <= 0)
+                return "There's nothing to decide.";
+            string[] options = param.Split(',');
+            for (int i = 0; i < options.Length; i++)
+            {
+                options[i] = options[i].Trim(' ');
+            }
+            Random generator = new Random();
+            return "You should go for: " + options[generator.Next(options.Length)] + ".";
+        }
+
         string NwodRoll(string param, string name)
         {
             string[] paramBits = param.Split(' ');
             int numdice;
-            string output = name + " rolled: ";
+            string output = "\u0002" + name + "\u0002" + " rolled: ";
             int awesomes = 0;
             int successes = 0;
             int failures = 0;
@@ -151,11 +164,11 @@ namespace Shadowbot
                             awesomes = 0;
                         }
                         else if (successes > 0)
-                            output = output + "; Successes: " + successes;
+                            output = output + "; Successes: " + "\u0002" + successes + "\u0002";
                         else if (botches > 0)
-                            output = output + "; Successes: " + (-botches);
+                            output = output + "; Successes: " + "\u0002" + (-botches) + "\u0002";
                         else
-                            output = output + "; Successes: 0";
+                            output = output + "; Successes: \u00020\u0002";
                     }
                     return output;
                 }
@@ -166,7 +179,7 @@ namespace Shadowbot
         string ShadowRoll(string param, string name)
         {
             int numdice;
-            string output = name + " rolled: " ;
+            string output = "\u0002" + name + "\u0002" + " rolled: ";
             int successes = 0;
             int failures = 0;
             int botches = 0;
@@ -178,7 +191,7 @@ namespace Shadowbot
                     int die = generator.Next(6);
                     die++; //to make it 1-6 instead of 0-5
                     output += die;
-                    if(i < numdice-1)
+                    if (i < numdice - 1)
                         output += ", ";
                     if (die >= 5)
                         successes++;
@@ -190,21 +203,42 @@ namespace Shadowbot
                 if (botches > (numdice / 2))
                 {
                     if (successes > 0)
-                        output = output + "; Successes: " + successes + ", GLITCH!";
+                        output = output + "; Successes: " + "\u0002" + successes + "\u0002" + ", \u0002GLITCH!\u0002";
                     else
-                        output = output + "; CRITICAL GLITCH!";
+                        output = output + "; \u0002CRITICAL GLITCH!\u0002";
                 }
                 else
                 {
                     if (successes > 0)
-                        output = output + "; Successes: " + successes;
+                        output = output + "; Successes: " + "\u0002" + successes + "\u0002";
                     else
-                        output = output + "; Total Failure";
+                        output = output + "; \u0002Total Failure\u0002";
                 }
                 return output;
             }
             else
                 return "Invalid parameters. Usage \"!sr <dice>\"";
+        }
+
+        string GetSender(string[] message)
+        {
+            if (message[2][0] == '#')
+                return message[2];
+            else
+                return ExtractNick(message[0]);
+        }
+
+        string Tell(string param)
+        {
+            string[] split = param.Split(' ');
+            string returnString = "";
+            returnString += split[0] + " :";
+            for (int i = 1; i < split.Length; i++)
+            {
+                returnString += split[i];
+                returnString += " ";
+            }
+            return returnString;
         }
 
         public void IRCWork()
@@ -227,15 +261,15 @@ namespace Shadowbot
                 {
                     string command = ex[3]; //grab the command sent
                     string param = "";
-                    
-                        for (int i = 4; i < ex.Length; i++)
-                        {
-                            param += ex[i];
-                            param += " ";
-                            if (param[0] == ':')
-                                break;
-                        }
-                    switch (command)
+
+                    for (int i = 4; i < ex.Length; i++)
+                    {
+                        param += ex[i];
+                        param += " ";
+                        if (param[0] == ':')
+                            break;
+                    }
+                    switch (command.ToLower())
                     {
                         case ":!join":
                             if (NickServVerify(ExtractNick(ex[0])))
@@ -243,23 +277,29 @@ namespace Shadowbot
                             break;
                         case ":!say":
                             if (NickServVerify(ExtractNick(ex[0])))
-                                sendData("PRIVMSG", ex[2] + " " + ":" + param); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                                sendData("PRIVMSG", GetSender(ex) + " " + ":" + param); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
                             break;
                         case ":!quit":
                             if (NickServVerify(ExtractNick(ex[0])))
                             {
-                                sendData("QUIT", param); //if the command is quit, send the QUIT command to the server with a quit message
+                                sendData("QUIT", ":" + param); //if the command is quit, send the QUIT command to the server with a quit message
                                 shouldRun = false; //turn shouldRun to false - the server will stop sending us data so trying to read it will not work and result in an error. This stops the loop from running and we will close off the connections properly
                             }
                             break;
                         case ":!sr":
-                            sendData("PRIVMSG", ex[2] + " " + ":" + ShadowRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                            sendData("PRIVMSG", GetSender(ex) + " " + ":" + ShadowRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
                             break;
                         case ":!nwod":
-                            sendData("PRIVMSG", ex[2] + " " + ":" + NwodRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                            sendData("PRIVMSG", GetSender(ex) + " " + ":" + NwodRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
                             break;
                         case ":!part":
-                            sendData("PART", ex[2]);
+                            sendData("PART", GetSender(ex));
+                            break;
+                        case ":!decide":
+                            sendData("PRIVMSG", GetSender(ex) + " " + ":" + Decide(param)); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                            break;
+                        case ":!tell":
+                            sendData("PRIVMSG", Tell(param));
                             break;
                     }
                 }
