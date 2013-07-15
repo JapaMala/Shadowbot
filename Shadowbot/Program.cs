@@ -240,6 +240,19 @@ namespace Shadowbot
             }
             return returnString;
         }
+        string Do(string param)
+        {
+            string[] split = param.Split(' ');
+            string returnString = "";
+            returnString += split[0] + " :\u0001ACTION ";
+            for (int i = 1; i < split.Length; i++)
+            {
+                returnString += split[i];
+                returnString += " ";
+            }
+            returnString += "\u0001";
+            return returnString;
+        }
 
         public void IRCWork()
         {
@@ -299,7 +312,12 @@ namespace Shadowbot
                             sendData("PRIVMSG", GetSender(ex) + " " + ":" + Decide(param)); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
                             break;
                         case ":!tell":
-                            sendData("PRIVMSG", Tell(param));
+                            if (NickServVerify(ExtractNick(ex[0])))
+                                sendData("PRIVMSG", Tell(param));
+                            break;
+                        case ":!do":
+                            if (NickServVerify(ExtractNick(ex[0])))
+                                sendData("PRIVMSG", Do(param));
                             break;
                     }
                 }
