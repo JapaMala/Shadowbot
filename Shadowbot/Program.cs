@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Net.Sockets;
 using System.IO;
+using System.Diagnostics;
 
 namespace Shadowbot
 {
@@ -18,6 +19,7 @@ namespace Shadowbot
 
     class IRCBot
     {
+        Stopwatch pinger = new Stopwatch(); 
         TcpClient IRCConnection = null;
         IRCConfig config;
         NetworkStream ns = null;
@@ -26,40 +28,45 @@ namespace Shadowbot
 
         public IRCBot(IRCConfig config)
         {
-            this.config = config;
-            try
+            bool stayConnected = true;
+            while (stayConnected)
             {
-                IRCConnection = new TcpClient(config.server, config.port);
-            }
-            catch
-            {
-                Console.WriteLine("Connection Error");
-            }
+                this.config = config;
+                try
+                {
+                    IRCConnection = new TcpClient(config.server, config.port);
+                }
+                catch
+                {
+                    Console.WriteLine("Connection Error");
+                }
 
-            try
-            {
-                ns = IRCConnection.GetStream();
-                sr = new StreamReader(ns);
-                sw = new StreamWriter(ns);
+                try
+                {
+                    ns = IRCConnection.GetStream();
+                    ns.ReadTimeout = 10;
+                    sr = new StreamReader(ns);
+                    sw = new StreamWriter(ns);
 
-                sendData("USER", config.nick + " Japa " + " Japa" + " :" + config.name);
-                sendData("NICK", config.nick);
-                IRCWork();
-            }
-            catch
-            {
-                Console.WriteLine("Communication error");
-            }
-            finally
-            {
-                if (sr != null)
-                    sr.Close();
-                if (sw != null)
-                    sw.Close();
-                if (ns != null)
-                    ns.Close();
-                if (IRCConnection != null)
-                    IRCConnection.Close();
+                    sendData("USER", config.nick + " Japa " + " Japa" + " :" + config.name);
+                    sendData("NICK", config.nick);
+                    stayConnected = !IRCWork();
+                }
+                catch
+                {
+                    Console.WriteLine("Communication error");
+                }
+                finally
+                {
+                    if (sr != null)
+                        sr.Close();
+                    if (sw != null)
+                        sw.Close();
+                    if (ns != null)
+                        ns.Close();
+                    if (IRCConnection != null)
+                        IRCConnection.Close();
+                }
             }
         }
 
@@ -89,7 +96,16 @@ namespace Shadowbot
         bool NickServVerify(string input)
         {
             sendData("PRIVMSG", "NickServ" + " " + ":INFO" + " " + input);
-            string reply = sr.ReadLine();
+            string reply = "";
+            while(true)
+            {
+                try
+                {
+                    reply = sr.ReadLine();
+                    break;
+                }
+                catch{}
+            }
             Console.WriteLine(reply);
             string[] replyParts = reply.Split((char)2);
             if (replyParts.Length > 3)
@@ -254,74 +270,108 @@ namespace Shadowbot
             return returnString;
         }
 
-        public void IRCWork()
+        public bool IRCWork()
         {
+            pinger.Restart();
+            bool waitingForPing = false;
             string[] ex;
             string data;
             bool shouldRun = true;
             while (shouldRun)
             {
-                data = sr.ReadLine();
-                Console.WriteLine(data);
-                char[] charSeparator = new char[] { ' ' };
-                ex = data.Split(charSeparator, 5);
-
-                if (ex[0] == "PING")
+                try
                 {
-                    sendData("PONG", ex[1]);
+                    data = sr.ReadLine();
+                    Console.WriteLine(data);
+                    char[] charSeparator = new char[] { ' ' };
+                    ex = data.Split(charSeparator, 5);
+
+                    if (ex[0] == "PING")
+                    {
+                        sendData("PONG", ex[1]);
+                    }
+                    if (ex[1] == "PONG")
+                    {
+                        long ticks;
+                        if (Int64.TryParse(ex[3].TrimStart(':'), out ticks))
+                        {
+                            Console.WriteLine(TimeSpan.FromTicks(DateTime.Now.Ticks - ticks).TotalSeconds + " second lag");
+                        }
+                        else
+                        {
+                            Console.WriteLine("Could not understand " + ex[3].TrimStart(':'));
+                        }
+                        pinger.Restart();
+                        waitingForPing = false;
+                    }
+
+                    if (ex.Length > 3) //is the command received long enough to be a bot command?
+                    {
+                        string command = ex[3]; //grab the command sent
+                        string param = "";
+
+                        for (int i = 4; i < ex.Length; i++)
+                        {
+                            param += ex[i];
+                            param += " ";
+                            if (param[0] == ':')
+                                break;
+                        }
+                        switch (command.ToLower())
+                        {
+                            case ":!join":
+                                if (NickServVerify(ExtractNick(ex[0])))
+                                    sendData("JOIN", param); //if the command is !join send the "JOIN" command to the server with the parameters set by the user
+                                break;
+                            case ":!say":
+                                if (NickServVerify(ExtractNick(ex[0])))
+                                    sendData("PRIVMSG", GetSender(ex) + " " + ":" + param); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                                break;
+                            case ":!quit":
+                                if (NickServVerify(ExtractNick(ex[0])))
+                                {
+                                    sendData("QUIT", ":" + param); //if the command is quit, send the QUIT command to the server with a quit message
+                                    shouldRun = false; //turn shouldRun to false - the server will stop sending us data so trying to read it will not work and result in an error. This stops the loop from running and we will close off the connections properly
+                                }
+                                break;
+                            case ":!sr":
+                                sendData("PRIVMSG", GetSender(ex) + " " + ":" + ShadowRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                                break;
+                            case ":!nwod":
+                                sendData("PRIVMSG", GetSender(ex) + " " + ":" + NwodRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                                break;
+                            case ":!part":
+                                sendData("PART", GetSender(ex));
+                                break;
+                            case ":!decide":
+                                sendData("PRIVMSG", GetSender(ex) + " " + ":" + Decide(param)); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
+                                break;
+                            case ":!tell":
+                                if (NickServVerify(ExtractNick(ex[0])))
+                                    sendData("PRIVMSG", Tell(param));
+                                break;
+                            case ":!do":
+                                if (NickServVerify(ExtractNick(ex[0])))
+                                    sendData("PRIVMSG", Do(param));
+                                break;
+                        }
+                    }
                 }
-                if (ex.Length > 3) //is the command received long enough to be a bot command?
+                catch
                 {
-                    string command = ex[3]; //grab the command sent
-                    string param = "";
-
-                    for (int i = 4; i < ex.Length; i++)
-                    {
-                        param += ex[i];
-                        param += " ";
-                        if (param[0] == ':')
-                            break;
-                    }
-                    switch (command.ToLower())
-                    {
-                        case ":!join":
-                            if (NickServVerify(ExtractNick(ex[0])))
-                                sendData("JOIN", param); //if the command is !join send the "JOIN" command to the server with the parameters set by the user
-                            break;
-                        case ":!say":
-                            if (NickServVerify(ExtractNick(ex[0])))
-                                sendData("PRIVMSG", GetSender(ex) + " " + ":" + param); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
-                            break;
-                        case ":!quit":
-                            if (NickServVerify(ExtractNick(ex[0])))
-                            {
-                                sendData("QUIT", ":" + param); //if the command is quit, send the QUIT command to the server with a quit message
-                                shouldRun = false; //turn shouldRun to false - the server will stop sending us data so trying to read it will not work and result in an error. This stops the loop from running and we will close off the connections properly
-                            }
-                            break;
-                        case ":!sr":
-                            sendData("PRIVMSG", GetSender(ex) + " " + ":" + ShadowRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
-                            break;
-                        case ":!nwod":
-                            sendData("PRIVMSG", GetSender(ex) + " " + ":" + NwodRoll(param, ExtractNick(ex[0]))); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
-                            break;
-                        case ":!part":
-                            sendData("PART", GetSender(ex));
-                            break;
-                        case ":!decide":
-                            sendData("PRIVMSG", GetSender(ex) + " " + ":" + Decide(param)); //if the command is !say, send a message to the chan (ex[2]) followed by the actual message (ex[4]).
-                            break;
-                        case ":!tell":
-                            if (NickServVerify(ExtractNick(ex[0])))
-                                sendData("PRIVMSG", Tell(param));
-                            break;
-                        case ":!do":
-                            if (NickServVerify(ExtractNick(ex[0])))
-                                sendData("PRIVMSG", Do(param));
-                            break;
-                    }
+                }
+                if ((pinger.Elapsed > TimeSpan.FromSeconds(30)) && !waitingForPing)
+                {
+                    sendData("PING", DateTime.Now.Ticks.ToString());
+                    waitingForPing = true;
+                }
+                if ((pinger.Elapsed > TimeSpan.FromMinutes(2)) && waitingForPing)
+                {
+                    Console.WriteLine("Connection Timeout.");
+                    return false;
                 }
             }
+            return true;
         }
     }
 
