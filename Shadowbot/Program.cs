@@ -95,29 +95,39 @@ namespace Shadowbot
 
         bool NickServVerify(string input)
         {
-            sendData("PRIVMSG", "NickServ" + " " + ":INFO" + " " + input);
-            string reply = "";
-            while(true)
+            sendData("WHOIS", input);
+            string[] replyParts;
+            for (int counter = 0; counter < 16; counter++)
             {
-                try
+                string reply = "";
+                while (true)
                 {
-                    reply = sr.ReadLine();
-                    break;
+                    try
+                    {
+                        reply = sr.ReadLine();
+                        break;
+                    }
+                    catch { }
                 }
-                catch{}
-            }
-            Console.WriteLine(reply);
-            string[] replyParts = reply.Split((char)2);
-            if (replyParts.Length > 3)
-            {
-                Console.WriteLine("Detected user registered as " + replyParts[3]);
-                if (replyParts[3] == "Japa")
-                    return true;
+                Console.WriteLine(reply);
+                replyParts = reply.Split(' ');
+                if (replyParts.Length > 1)
+                {
+                    if (replyParts[1] == "318")
+                        break;
+                    else if (replyParts[1] == "330")
+                    {
+                        Console.WriteLine(input + " is logged in as " + replyParts[4]);
+                        if (replyParts[4] == "Japa")
+                            return true;
+                        else
+                            return false;
+                    }
+                }
                 else
                     return false;
             }
-            else
-                return false;
+            return false;
         }
 
         string Decide(string param)
